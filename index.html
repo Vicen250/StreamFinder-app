@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StreamFinder Pro (Anti-Error)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background: #0b1120; color: #f1f5f9; font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.5); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.05); }
+        .movie-card { transition: transform 0.2s ease; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 pb-24">
+
+    <main class="max-w-4xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent tracking-tight">StreamFinder</h1>
+        </header>
+
+        <div class="glass rounded-2xl p-2 flex items-center mb-8 shadow-xl max-w-2xl mx-auto">
+            <input id="searchInput" type="text" placeholder="Busca una peli o serie..." 
+                   class="bg-transparent w-full p-3 outline-none text-slate-100 placeholder:text-slate-500">
+            <button onclick="searchMedia()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-xl transition-all shadow-md">
+                <i class="fas fa-search"></i>
+            </button>
+        </div>
+
+        <div id="resultsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12 text-center">
+            <p class="col-span-full text-slate-500 italic">Escribe algo para empezar...</p>
+        </div>
+
+        <section class="mt-12 border-t border-slate-800 pt-8">
+            <h3 class="text-xl font-bold mb-5 flex items-center gap-2.5">
+                <i class="fas fa-bookmark text-blue-500"></i> Mis Favoritos
+            </h3>
+            <div id="favList" class="space-y-3 custom-scrollbar"></div>
+        </section>
+    </main>
+
+    <script>
+        const API_KEY = 'c166cf26ff659581a08da20ca9391db3'; 
+        let favorites = JSON.parse(localStorage.getItem('myFavs')) || [];
+
+        async function searchMedia() {
+            const query = document.getElementById('searchInput').value;
+            if(!query) return;
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '<div class="col-span-full py-10"><i class="fas fa-spinner fa-spin text-3xl text-blue-500"></i><p class="mt-2 text-slate-400">Buscando títulos...</p></div>';
+            
+            try {
+                const searchRes = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${API_KEY}&query=${encodeURIComponent(query)}&language=es-ES`);
+                const searchData = await searchRes.json();
+                
+                // Limitamos a los primeros 10 para evitar el Error 500 por exceso de peticiones
+                const items = searchData.results.filter(i => i.media_type === 'movie' || i.media_type === 'tv').slice(0, 10);
+
+                if(items.length === 0) {
+                    grid.innerHTML = '<p class="col-span-full text-slate-500">No se encontró nada con ese nombre.</p>';
+                    return;
+                }
+
+                grid.innerHTML = ''; 
+                
+                // Procesamos uno a uno con control de errores
+                for (const item of items) {
+                    try {
+                        const details = await getExtraDetails(item);
+                        if(details) renderCard(details);
+                    } catch (err) {
+                        console.error("Error cargando un item:", err);
+                        // Si falla uno, seguimos con el siguiente en lugar de romper todo
+                    }
+                }
+            } catch (e) { 
+                grid.innerHTML = '<p class="col-span-full text-red-400 bg-red-900/20 p-4 rounded-xl border border-red-800">Error de servidor (API ocupada). Por favor, espera unos segundos e intenta de nuevo.</p>';
+            }
+        }
+
+        async function getExtraDetails(item) {
+            const res = await fetch(`https://api.themoviedb.org/3/${item.media_type}/${item.id}?api_key=${API_KEY}&append_to_response=watch/providers,release_dates,content_ratings&language=es-ES`);
+            if(!res.ok) return null; // Si el servidor falla para este item, lo ignoramos
+            const data = await res.json();
+            return { ...data, media_type: item.media_type };
+        }
+
+        function renderCard(data) {
+            const grid = document.getElementById('resultsGrid');
+            
+            let rating = "T.P.";
+            if (data.media_type === 'movie') {
+                const release = data.release_dates?.results?.find(r => r.iso_3166_1 === 'ES');
+                rating = release?.release_dates[0]?.certification || "T.P.";
+            } else {
+                const ratingES = data.content_ratings?.results?.find(r => r.iso_3166_1 === 'ES');
+                rating = ratingES?.rating || "T.P.";
+            }
+
+            const isFav = favorites.some(f => f.id === data.id && f.type === data.media_type);
+
+            const cardHtml = `
+                <div class="movie-card bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 flex flex-col shadow-lg text-left">
+                    <div class="relative h-60">
+                        <img src="${data.poster_path ? 'https://image.tmdb.org/t/p/w500'+data.poster_path : 'https://via.placeholder.com/500x750?text=Sin+Imagen'}" 
+                             class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent"></div>
+                        <button onclick="toggleFavorite(${data.id}, '${(data.title || data.name).replace(/'/g, "")}', '${data.media_type}')" 
+                                class="absolute top-4 right-4 bg-black/40 p-2.5 rounded-full backdrop-blur-md border border-white/10">
+                            <i class="${isFav ? 'fas' : 'far'} fa-star text-yellow-400"></i>
+                        </button>
+                        <div class="absolute bottom-4 left-4 right-4">
+                            <h2 class="text-xl font-bold text-white line-clamp-1">${data.title || data.name}</h2>
+                            <div class="flex gap-2 mt-1">
+                                <span class="text-[10px] bg-blue-600 px-2 py-0.5 rounded text-white font-bold uppercase">${data.media_type === 'movie' ? 'Cine' : 'Serie'}</span>
+                                <span class="text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-300 font-bold">${rating}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="p-5 flex-1 flex flex-col">
+                        <p class="text-slate-400 text-xs leading-relaxed line-clamp-3 mb-4 flex-1">
+                            ${data.overview || "Sinopsis no disponible."}
+                        </p>
+                        
+                        <div class="flex flex-wrap gap-2 mb-4">
+                            ${(data['watch/providers']?.results?.ES?.flatrate || []).slice(0,4).map(p => `
+                                <img src="https://image.tmdb.org/t/p/original${p.logo_path}" class="w-8 h-8 rounded-lg border border-slate-700 shadow-sm" title="${p.provider_name}">
+                            `).join('')}
+                        </div>
+
+                        <div class="text-[10px] text-slate-500 border-t border-slate-900 pt-3 flex justify-between">
+                            <span>
+                                ${data.media_type === 'movie' ? 
+                                    `<i class="far fa-clock mr-1"></i> ${data.runtime || '?'} min` : 
+                                    `<i class="fas fa-tv mr-1"></i> ${data.number_of_seasons || '?'} Temp.`}
+                            </span>
+                            <span>
+                                <i class="far fa-calendar mr-1"></i> ${(data.release_date || data.first_air_date || "").split('-')[0]}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            grid.innerHTML += cardHtml;
+        }
+
+        function toggleFavorite(id, title, type) {
+            const index = favorites.findIndex(f => f.id === id && f.type === type);
+            if(index === -1) {
+                favorites.push({id, title, type});
+            } else {
+                favorites.splice(index, 1);
+            }
+            localStorage.setItem('myFavs', JSON.stringify(favorites));
+            updateFavListUI();
+            
+            // Actualizamos la estrella visualmente sin recargar todo el grid
+            searchMedia(); 
+        }
+
+        function updateFavListUI() {
+            const list = document.getElementById('favList');
+            if(favorites.length === 0) {
+                list.innerHTML = '<p class="text-slate-600 text-sm italic p-4 glass rounded-xl text-center">Aún no tienes favoritos guardados.</p>';
+                return;
+            }
+            list.innerHTML = favorites.map(f => `
+                <div class="glass p-3 rounded-xl flex justify-between items-center border border-slate-800/50">
+                    <div class="flex items-center gap-3">
+                        <span class="text-[9px] font-bold ${f.type === 'movie' ? 'text-cyan-400' : 'text-purple-400'} uppercase">${f.type === 'movie' ? 'Cine' : 'Serie'}</span>
+                        <span class="text-sm font-medium text-slate-200">${f.title}</span>
+                    </div>
+                    <button onclick="removeFav(${f.id}, '${f.type}')" class="text-emerald-500 p-1.5">
+                        <i class="fas fa-check-circle text-xl"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function removeFav(id, type) {
+            favorites = favorites.filter(f => !(f.id === id && f.type === type));
+            localStorage.setItem('myFavs', JSON.stringify(favorites));
+            updateFavListUI();
+            searchMedia();
+        }
+
+        updateFavListUI();
+    </script>
+</body>
+</html>
