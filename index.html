@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MyCinema - Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background: #0b1120; color: #f1f5f9; font-family: 'Inter', sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.5); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.05); }
+        .movie-card { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        .synopsis-scroll { max-height: 100px; overflow-y: auto; padding-right: 5px; }
+        .synopsis-scroll::-webkit-scrollbar { width: 3px; }
+        .synopsis-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body class="min-h-screen p-4 pb-24">
+
+    <main class="max-w-4xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-extrabold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent italic">MyCinema</h1>
+        </header>
+
+        <div class="glass rounded-2xl p-2 flex items-center mb-8 shadow-xl max-w-2xl mx-auto border border-white/5">
+            <input id="searchInput" type="text" placeholder="¿Qué quieres ver hoy?" class="bg-transparent w-full p-3 outline-none text-slate-100">
+            <button id="searchBtn" onclick="searchMedia()" class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-xl transition-all">
+                <i class="fas fa-search"></i>
+            </button>
+        </div>
+
+        <div id="resultsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+            <p class="col-span-full text-center text-slate-500 italic">Busca algo para empezar...</p>
+        </div>
+
+        <section class="mt-12 border-t border-slate-800 pt-8">
+            <h3 class="text-xl font-bold mb-5 flex items-center gap-2.5 text-blue-400"><i class="fas fa-star"></i> Mis Favoritos</h3>
+            <div id="favList" class="space-y-3"></div>
+        </section>
+    </main>
+
+    <script>
+        const API_KEY = 'c166cf26ff659581a08da20ca9391db3'; 
+        let favorites = JSON.parse(localStorage.getItem('myFavs')) || [];
+        let currentAbortController = null; // Para cancelar peticiones previas
+
+        async function searchMedia() {
+            const query = document.getElementById('searchInput').value;
+            if(!query) return;
+
+            // 1. Cancelar cualquier búsqueda que esté en curso actualmente
+            if (currentAbortController) {
+                currentAbortController.abort();
+            }
+            currentAbortController = new AbortController();
+            const signal = currentAbortController.signal;
+
+            const grid = document.getElementById('resultsGrid');
+            const btn = document.getElementById('searchBtn');
+            
+            btn.disabled = true;
+            grid.innerHTML = '<div class="col-span-full text-center py-10"><i class="fas fa-circle-notch fa-spin text-3xl text-blue-500"></i></div>';
+            
+            try {
+                const searchRes = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${API_KEY}&query=${encodeURIComponent(query)}&language=es-ES`, { signal });
+                const searchData = await searchRes.json();
+                
+                // Solo 6 resultados: Calidad > Cantidad (Evita bloqueos de la API)
+                const items = searchData.results.filter(i => i.media_type === 'movie' || i.media_type === 'tv').slice(0, 6);
+
+                if(items.length === 0) {
+                    grid.innerHTML = '<p class="col-span-full text-center text-slate-500">No hay resultados.</p>';
+                    btn.disabled = false;
+                    return;
+                }
+
+                grid.innerHTML = ''; 
+                
+                for (const item of items) {
+                    if (signal.aborted) break; // Si el usuario buscó otra cosa, paramos este bucle
+                    
+                    await new Promise(r => setTimeout(r, 250)); // Pausa humana entre peticiones
+                    
+                    try {
+                        const res = await fetch(`https://api.themoviedb.org/3/${item.media_type}/${item.id}?api_key=${API_KEY}&append_to_response=watch/providers,release_dates,content_ratings&language=es-ES`, { signal });
+                        if(!res.ok) continue;
+                        const data = await res.json();
+                        renderCard({ ...data, media_type: item.media_type });
+                    } catch (e) {
+                        if (e.name === 'AbortError') return;
+                        console.log("Error en un resultado individual, saltando...");
+                    }
+                }
+            } catch (e) { 
+                if (e.name !== 'AbortError') {
+                    grid.innerHTML = '<p class="col-span-full text-center text-red-400">Error. Espera 3 segundos y prueba de nuevo.</p>';
+                }
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function renderCard(data) {
+            const grid = document.getElementById('resultsGrid');
+            let rating = "T.P.";
+            if (data.media_type === 'movie') {
+                const release = data.release_dates?.results?.find(r => r.iso_3166_1 === 'ES');
+                rating = release?.release_dates[0]?.certification || "T.P.";
+            } else {
+                const ratingES = data.content_ratings?.results?.find(r => r.iso_3166_1 === 'ES');
+                rating = ratingES?.rating || "T.P.";
+            }
+
+            const isFav = favorites.some(f => f.id === data.id);
+            const cardHtml = `
+                <div class="movie-card bg-slate-950 rounded-3xl overflow-hidden border border-slate-800 flex flex-col shadow-2xl">
+                    <div class="relative h-48 shrink-0">
+                        <img src="${data.poster_path ? 'https://image.tmdb.org/t/p/w500'+data.poster_path : 'https://via.placeholder.com/500x750?text=Sin+Imagen'}" class="w-full h-full object-cover">
+                        <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent"></div>
+                        <button onclick="toggleFavorite(${data.id}, '${(data.title || data.name).replace(/'/g, "")}', '${data.media_type}')" 
+                                class="absolute top-3 right-3 bg-black/60 p-2 rounded-full border border-white/10">
+                            <i class="${isFav ? 'fas' : 'far'} fa-star text-yellow-400"></i>
+                        </button>
+                        <div class="absolute bottom-2 left-4 right-4">
+                            <h2 class="text-lg font-bold text-white line-clamp-1">${data.title || data.name}</h2>
+                            <span class="text-[9px] bg-slate-800 px-2 py-0.5 rounded text-yellow-500 font-bold border border-slate-700">${rating}</span>
+                        </div>
+                    </div>
+                    <div class="p-4 flex-1 flex flex-col">
+                        <div class="synopsis-scroll mb-4"><p class="text-slate-300 text-[11px] leading-relaxed">${data.overview || "Sinopsis no disponible."}</p></div>
+                        <div class="mt-auto flex items-center justify-between border-t border-slate-900 pt-3">
+                            <div class="flex gap-1">
+                                ${(data['watch/providers']?.results?.ES?.flatrate || []).slice(0,3).map(p => `
+                                    <img src="https://image.tmdb.org/t/p/original${p.logo_path}" class="w-6 h-6 rounded shadow-sm">
+                                `).join('')}
+                            </div>
+                            <span class="text-[10px] text-slate-500 italic">${(data.release_date || data.first_air_date || "").split('-')[0]}</span>
+                        </div>
+                    </div>
+                </div>`;
+            grid.innerHTML += cardHtml;
+        }
+
+        function toggleFavorite(id, title, type) {
+            const index = favorites.findIndex(f => f.id === id);
+            if(index === -1) favorites.push({id, title, type});
+            else favorites.splice(index, 1);
+            localStorage.setItem('myFavs', JSON.stringify(favorites));
+            updateFavListUI();
+            const stars = document.querySelectorAll(`button[onclick*="${id}"] i`);
+            stars.forEach(s => { s.classList.toggle('fas'); s.classList.toggle('far'); });
+        }
+
+        function updateFavListUI() {
+            const list = document.getElementById('favList');
+            if(favorites.length === 0) {
+                list.innerHTML = '<p class="text-slate-600 text-sm italic text-center p-4 glass rounded-2xl">Sin favoritos.</p>';
+                return;
+            }
+            list.innerHTML = favorites.map(f => `
+                <div class="glass p-3 rounded-2xl flex justify-between items-center border border-slate-800/50">
+                    <span class="text-xs font-semibold text-slate-200">${f.title}</span>
+                    <button onclick="removeFav(${f.id})" class="text-emerald-500 px-2"><i class="fas fa-check-circle"></i></button>
+                </div>`).join('');
+        }
+
+        function removeFav(id) {
+            favorites = favorites.filter(f => f.id !== id);
+            localStorage.setItem('myFavs', JSON.stringify(favorites));
+            updateFavListUI();
+            const stars = document.querySelectorAll(`button[onclick*="${id}"] i`);
+            stars.forEach(s => { s.classList.remove('fas'); s.classList.add('far'); });
+        }
+
+        updateFavListUI();
+    </script>
+</body>
+</html>
