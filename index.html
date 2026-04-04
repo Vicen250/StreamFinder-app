@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MyCinema Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body { background: #0b1120; color: #f1f5f9; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+        .glass { background: rgba(30, 41, 59, 0.5); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,0.05); }
+        
+        #videoPlayerOverlay {
+            display: none; position: fixed; inset: 0; z-index: 9999;
+            background: rgba(7, 10, 18, 0.98); flex-direction: column;
+            align-items: center; justify-content: center;
+        }
+
+        .flip-card { perspective: 1000px; height: 480px; }
+        .flip-card-inner {
+            position: relative; width: 100%; height: 100%;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); transform-style: preserve-3d;
+        }
+        .flip-card.flipped .flip-card-inner { transform: rotateY(180deg); }
+        .flip-card-front, .flip-card-back {
+            position: absolute; width: 100%; height: 100%;
+            -webkit-backface-visibility: hidden; backface-visibility: hidden;
+            border-radius: 1.5rem; overflow: hidden;
+        }
+        .flip-card-back { transform: rotateY(180deg); background: #0f172a; border: 2px solid #3b82f6; display: flex; flex-direction: column; }
+
+        .synopsis-scroll { max-height: 100px; overflow-y: auto; scrollbar-width: thin; }
+        .synopsis-scroll::-webkit-scrollbar { width: 3px; }
+        .synopsis-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body class="min-h-screen pb-24">
+
+    <div id="videoPlayerOverlay">
+        <button onclick="closeTrailer()" class="mb-6 bg-white/10 px-8 py-3 rounded-full border border-white/20 flex items-center gap-3 active:scale-90 transition-all">
+            <i class="fas fa-times"></i> <span class="font-bold text-sm uppercase">Cerrar</span>
+        </button>
+        <div class="w-[92%] max-w-3xl aspect-video rounded-2xl overflow-hidden shadow-2xl bg-black border border-white/10">
+            <iframe id="ytIframe" class="w-full h-full" src="" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        </div>
+    </div>
+
+    <nav class="sticky top-0 z-50 glass border-b border-white/10 p-4 mb-6">
+        <div class="max-w-4xl mx-auto flex justify-between items-center">
+            <h1 class="text-2xl font-black bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent italic">MyCinema</h1>
+            <button onclick="location.reload()" class="bg-slate-800 w-11 h-11 rounded-full flex items-center justify-center border border-white/10 shadow-lg">
+                <i class="fas fa-home text-blue-400"></i>
+            </button>
+        </div>
+    </nav>
+
+    <main class="max-w-4xl mx-auto px-4">
+        <div class="glass rounded-2xl p-2 flex items-center mb-10 border border-white/5 shadow-2xl">
+            <input id="searchInput" type="text" placeholder="Buscar película o serie..." class="bg-transparent w-full p-3 outline-none text-slate-100">
+            <button id="searchBtn" onclick="searchMedia()" class="bg-blue-600 px-6 py-3 rounded-xl shadow-lg active:scale-95 transition-all">
+                <i class="fas fa-search"></i>
+            </button>
+        </div>
+
+        <div id="resultsGrid" class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+            <p class="col-span-full text-center text-slate-500 italic py-10">Introduce un título arriba...</p>
+        </div>
+
+        <div id="favList" class="space-y-3 mt-10"></div>
+    </main>
+
+    <script>
+        // --- COLOCA AQUÍ TU API KEY DE 32 CARACTERES ---
+        const API_KEY = 'c166cf26ff659581a08da20ca9391db3'; 
+        // -----------------------------------------------
+
+        let favorites = JSON.parse(localStorage.getItem('myFavs')) || [];
+        let currentAbortController = null;
+
+        function openTrailer(key) {
+            const iframe = document.getElementById('ytIframe');
+            iframe.src = `https://www.youtube-nocookie.com/embed/${key}?autoplay=1&rel=0`;
+            document.getElementById('videoPlayerOverlay').style.display = 'flex';
+        }
+
+        function closeTrailer() {
+            document.getElementById('ytIframe').src = ''; 
+            document.getElementById('videoPlayerOverlay').style.display = 'none';
+        }
+
+        async function searchMedia() {
+            const query = document.getElementById('searchInput').value;
+            if(!query) return;
+
+            // Cancelar búsqueda anterior si existe
+            if (currentAbortController) currentAbortController.abort();
+            currentAbortController = new AbortController();
+            
+            const grid = document.getElementById('resultsGrid');
+            const btn = document.getElementById('searchBtn');
+            
+            btn.disabled = true;
+            grid.innerHTML = '<div class="col-span-full text-center py-10"><i class="fas fa-spinner fa-spin text-4xl text-blue-500"></i><p class="mt-4 text-slate-500">Buscando sin saturar el servidor...</p></div>';
+
+            try {
+                // Paso 1: Búsqueda inicial
+                const searchRes = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${API_KEY}&query=${encodeURIComponent(query)}&language=es-ES`, { signal: currentAbortController.signal });
+                const searchData = await searchRes.json();
+                
+                // Filtramos y limitamos a 4 para máxima estabilidad
+                const items = (searchData.results || []).filter(i => i.media_type === 'movie' || i.media_type === 'tv').slice(0, 4);
+
+                if(items.length === 0) {
+                    grid.innerHTML = '<p class="col-span-full text-center text-slate-500">No se encontraron resultados.</p>';
+                    btn.disabled = false; return;
+                }
+
+                grid.innerHTML = ''; 
+
+                // Paso 2: Carga secuencial (Anti Error 500)
+                for (const item of items) {
+                    // Pausa de 400ms para que el servidor respire entre peticiones
+                    await new Promise(r => setTimeout(r, 400));
+
+                    try {
+                        // Pedimos solo créditos y videos (Quitamos watch/providers que da error 500)
+                        const detailRes = await fetch(`https://api.themoviedb.org/3/${item.media_type}/${item.id}?api_key=${API_KEY}&append_to_response=credits,videos&language=es-ES`, { signal: currentAbortController.signal });
+                        
+                        if (!detailRes.ok) continue; // Si una falla, saltamos a la siguiente
+
+                        const data = await detailRes.json();
+                        renderCard({ ...data, media_type: item.media_type });
+                    } catch (err) {
+                        console.warn("Saltando resultado por error de servidor");
+                    }
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    grid.innerHTML = '<p class="col-span-full text-center text-red-400">Error de conexión con la API. Verifica tu clave.</p>';
+                }
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        function renderCard(data) {
+            const grid = document.getElementById('resultsGrid');
+            const trailer = data.videos?.results?.find(v => v.type === 'Trailer' && v.site === 'YouTube');
+            const isFav = favorites.some(f => f.id === data.id);
+            const cardId = `card-${data.id}`;
+
+            const cardHtml = `
+                <div class="flip-card" id="${cardId}">
+                    <div class="flip-card-inner">
+                        <div class="flip-card-front bg-slate-900 border border-slate-800 flex flex-col shadow-2xl">
+                            <div class="relative h-60 shrink-0 cursor-pointer" onclick="document.getElementById('${cardId}').classList.toggle('flipped')">
+                                <img src="${data.poster_path ? 'https://image.tmdb.org/t/p/w500'+data.poster_path : 'https://via.placeholder.com/500x750?text=No+Imagen'}" class="w-full h-full object-cover">
+                                <div class="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent"></div>
+                                <div class="absolute bottom-3 left-4 right-4">
+                                    <h2 class="text-xl font-bold text-white line-clamp-1">${data.title || data.name}</h2>
+                                    <span class="text-[9px] bg-blue-600/40 text-blue-300 px-2 py-0.5 rounded border border-blue-500/30 uppercase font-black">${data.media_type}</span>
+                                </div>
+                            </div>
+                            <div class="p-5 flex-1 flex flex-col">
+                                <div class="synopsis-scroll mb-4 cursor-pointer" onclick="document.getElementById('${cardId}').classList.toggle('flipped')">
+                                    <p class="text-slate-400 text-xs leading-relaxed line-clamp-3">${data.overview || "Sinopsis no disponible."}</p>
+                                </div>
+                                <div class="mt-auto flex items-center justify-between pt-3 border-t border-white/5">
+                                    ${trailer ? `
+                                        <button onclick="openTrailer('${trailer.key}')" class="text-red-500 text-3xl active:scale-125 transition-all">
+                                            <i class="fab fa-youtube"></i>
+                                        </button>` : '<span class="text-[10px] text-slate-600 italic">Sin trailer</span>'}
+                                    <button onclick="toggleFavorite(${data.id}, '${(data.title || data.name).replace(/'/g, "")}', '${data.media_type}')" class="text-2xl text-yellow-500">
+                                        <i class="${isFav ? 'fas' : 'far'} fa-star"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flip-card-back p-6 flex flex-col items-center justify-between">
+                            <h3 class="font-bold text-blue-400 text-center w-full truncate border-b border-white/5 pb-2">${data.title || data.name}</h3>
+                            <div class="w-full">
+                                <p class="text-[8px] text-slate-500 uppercase text-center mb-3">Reparto</p>
+                                <div class="grid grid-cols-4 gap-2">
+                                    ${(data.credits?.cast || []).slice(0,4).map(a => `
+                                        <div class="text-center">
+                                            <img src="${a.profile
