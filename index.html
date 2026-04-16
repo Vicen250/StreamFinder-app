@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>MyCinema Pro v4</title>
+    <title>MyCinema Pro v5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -12,11 +12,15 @@
         @media (min-width: 768px) { .poster-grid { grid-template-columns: repeat(4, 1fr); } }
         .poster-card { position: relative; aspect-ratio: 2/3; border-radius: 12px; overflow: hidden; background: #111827; border: 1px solid rgba(255,255,255,0.05); }
         .poster-card img { width: 100%; height: 100%; object-fit: cover; }
-        .fav-btn { position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.6); width: 32px; height: 32px; border-radius: 50%; display: flex; items-center; justify-content: center; z-index: 10; border: 1px solid rgba(255,255,255,0.2); backdrop-filter: blur(4px); }
+        
+        /* Estrella limpia sin círculo */
+        .fav-btn { position: absolute; top: 8px; right: 8px; z-index: 10; font-size: 24px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8)); transition: transform 0.2s; }
+        .fav-btn:active { transform: scale(1.3); }
         .fav-active { color: #f59e0b !important; }
+        
         #detailView { display: none; position: fixed; inset: 0; background: #070b14; z-index: 100; overflow-y: auto; padding: 20px; }
         .badge-info { background: rgba(59, 130, 246, 0.1); color: #60a5fa; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: bold; border: 1px solid rgba(59, 130, 246, 0.2); }
-        .cast-img { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 2px solid #3b82f6; }
+        .season-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.05); border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
     </style>
 </head>
 <body class="p-4 pb-20">
@@ -35,8 +39,15 @@
         </div>
 
         <div id="favSection" class="mb-10 hidden">
-            <h2 class="text-sm font-bold text-yellow-500 uppercase tracking-widest mb-4"><i class="fas fa-star mr-2"></i> Mis Favoritos</h2>
-            <div id="favGrid" class="poster-grid"></div>
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-sm font-bold text-yellow-500 uppercase tracking-widest"><i class="fas fa-star mr-2"></i> Mis Favoritos</h2>
+                <button onclick="toggleFavCollapse()" class="text-xs bg-slate-800 px-3 py-1 rounded-lg border border-white/10">
+                    <span id="favToggleLabel">Ocultar</span> <i id="favToggleIcon" class="fas fa-chevron-up ml-1"></i>
+                </button>
+            </div>
+            <div id="favGridContainer">
+                <div id="favGrid" class="poster-grid"></div>
+            </div>
             <div class="h-px bg-white/10 mt-8 w-full"></div>
         </div>
 
@@ -47,8 +58,25 @@
     <script>
         const API_KEY = 'c166cf26ff659581a08da20ca9391db3';
         let favorites = JSON.parse(localStorage.getItem('myCinemaFavs')) || [];
+        let favCollapsed = false;
 
         function saveFavs() { localStorage.setItem('myCinemaFavs', JSON.stringify(favorites)); renderFavs(); }
+
+        function toggleFavCollapse() {
+            favCollapsed = !favCollapsed;
+            const container = document.getElementById('favGridContainer');
+            const label = document.getElementById('favToggleLabel');
+            const icon = document.getElementById('favToggleIcon');
+            if(favCollapsed) {
+                container.classList.add('hidden');
+                label.innerText = "Mostrar";
+                icon.className = "fas fa-chevron-down ml-1";
+            } else {
+                container.classList.remove('hidden');
+                label.innerText = "Ocultar";
+                icon.className = "fas fa-chevron-up ml-1";
+            }
+        }
 
         function toggleFav(e, id, title, poster, type) {
             e.stopPropagation();
@@ -56,7 +84,7 @@
             if(index > -1) { favorites.splice(index, 1); } 
             else { favorites.push({id, title, poster, type}); }
             saveFavs();
-            performSearch(); // Refresca iconos en búsqueda si está abierta
+            if(document.getElementById('searchInput').value) performSearch(); 
         }
 
         function renderFavs() {
@@ -66,7 +94,7 @@
             section.classList.remove('hidden');
             grid.innerHTML = favorites.map(f => `
                 <div class="poster-card shadow-lg" onclick="openFullDetails(${f.id}, '${f.type}')">
-                    <button class="fav-btn fav-active" onclick="toggleFav(event, ${f.id})"><i class="fas fa-star"></i></button>
+                    <i class="fas fa-star fav-btn fav-active" onclick="toggleFav(event, ${f.id})"></i>
                     <img src="https://image.tmdb.org/t/p/w342${f.poster}">
                 </div>
             `).join('');
@@ -77,7 +105,7 @@
             if(!q) return;
             document.getElementById('searchTitle').classList.remove('hidden');
             const area = document.getElementById('resultsArea');
-            area.innerHTML = '<p class="col-span-full text-center animate-pulse">Buscando...</p>';
+            area.innerHTML = '<p class="col-span-full text-center animate-pulse py-10">Buscando...</p>';
             
             try {
                 const response = await fetch(`https://api.themoviedb.org/3/search/multi?api_key=${API_KEY}&query=${encodeURIComponent(q)}&language=es-ES`);
@@ -91,10 +119,8 @@
                     div.className = "poster-card shadow-lg";
                     div.onclick = () => openFullDetails(item.id, item.media_type);
                     div.innerHTML = `
-                        <button class="fav-btn ${isFav ? 'fav-active' : 'text-white'}" 
-                            onclick="toggleFav(event, ${item.id}, '${(item.title || item.name).replace(/'/g, "")}', '${item.poster_path}', '${item.media_type}')">
-                            <i class="fas fa-star"></i>
-                        </button>
+                        <i class="fas fa-star fav-btn ${isFav ? 'fav-active' : 'text-white/50'}" 
+                            onclick="toggleFav(event, ${item.id}, '${(item.title || item.name).replace(/'/g, "")}', '${item.poster_path}', '${item.media_type}')"></i>
                         <img src="https://image.tmdb.org/t/p/w342${item.poster_path}" loading="lazy">
                     `;
                     area.appendChild(div);
@@ -110,10 +136,27 @@
             try {
                 const res = await fetch(`https://api.themoviedb.org/3/${type}/${id}?api_key=${API_KEY}&append_to_response=videos,credits,watch/providers&language=es-ES`);
                 const d = await res.json();
-                const trailer = d.videos?.results?.find(v => v.type === 'Trailer');
+                const trailer = d.videos?.results?.find(v => v.type === 'Trailer' && v.site === 'YouTube');
                 const cast = d.credits?.cast?.slice(0, 6) || [];
                 const providers = d['watch/providers']?.results?.ES?.flatrate || [];
                 
+                let extraInfo = "";
+                if (type === 'movie') {
+                    extraInfo = `<span class="badge-info">${d.runtime} min</span>`;
+                } else {
+                    extraInfo = `<span class="badge-info">${d.number_of_seasons} Temporadas</span>`;
+                    // Generar lista de capítulos por temporada
+                    extraInfo += `<div class="mt-8">
+                        <h4 class="text-[10px] font-bold text-slate-500 uppercase mb-3 italic">Desglose de Capítulos</h4>
+                        ${d.seasons.filter(s => s.season_number > 0).map(s => `
+                            <div class="season-item">
+                                <span class="text-sm font-bold">${s.name}</span>
+                                <span class="text-xs text-blue-400 font-bold">${s.episode_count} episodios</span>
+                            </div>
+                        `).join('')}
+                    </div>`;
+                }
+
                 content.innerHTML = `
                     <div class="rounded-2xl overflow-hidden bg-black mb-6 border border-white/10 shadow-2xl">
                         ${trailer ? `<iframe class="w-full aspect-video" src="https://www.youtube-nocookie.com/embed/${trailer.key}?autoplay=1" frameborder="0" allowfullscreen></iframe>` 
@@ -122,16 +165,14 @@
                     <h2 class="text-3xl font-black mb-3">${d.title || d.name}</h2>
                     <div class="flex flex-wrap gap-2 mb-6">
                         <span class="badge-info text-yellow-500 border-yellow-500/30">★ ${d.vote_average?.toFixed(1)}</span>
-                        <span class="badge-info">${type==='movie' ? d.runtime+' min' : d.number_of_seasons+' Temp.'}</span>
                         <span class="badge-info">${new Date(d.release_date || d.first_air_date).getFullYear()}</span>
+                        ${type === 'movie' ? extraInfo : ''}
                     </div>
                     <div class="space-y-6">
                         <section><h4 class="text-[10px] font-bold text-slate-500 uppercase mb-2 italic">Sinopsis</h4><p class="text-sm leading-relaxed text-slate-300">${d.overview || 'Sin descripción.'}</p></section>
+                        ${type === 'tv' ? extraInfo : ''}
                         <section><h4 class="text-[10px] font-bold text-slate-500 uppercase mb-3 italic">Dónde Ver</h4><div class="flex flex-wrap gap-3">
                             ${providers.map(p => `<img src="https://image.tmdb.org/t/p/original${p.logo_path}" class="w-10 h-10 rounded-lg">`).join('') || '<p class="text-xs italic text-slate-600">No disponible en streaming.</p>'}
-                        </div></section>
-                        <section><h4 class="text-[10px] font-bold text-slate-500 uppercase mb-4 italic">Reparto</h4><div class="flex gap-4 overflow-x-auto pb-4">
-                            ${cast.map(c => `<div class="flex-shrink-0 text-center w-20"><img src="https://image.tmdb.org/t/p/w185${c.profile_path}" class="cast-img mx-auto mb-2" onerror="this.src='https://via.placeholder.com/60'"><p class="text-[9px] font-bold line-clamp-1">${c.name}</p></div>`).join('')}
                         </div></section>
                     </div>
                 `;
